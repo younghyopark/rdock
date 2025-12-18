@@ -1,6 +1,6 @@
 # 🚢 rdock
 
-Remote development docking station. One command to deploy a complete development environment with persistent terminal and VS Code in your browser.
+Persistent dev station for remote development. One command to deploy a complete development environment with persistent terminal and VS Code in your browser. No need to consistently relogin to your SSH every single time 
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11+-blue.svg" alt="Python 3.11+">
@@ -47,11 +47,11 @@ After installation, access your environment at:
 
 ### Keyboard Shortcuts
 
-- `Ctrl+Shift+T` - New terminal tab
-- `Ctrl+Shift+W` - Close current tab
+- `Cmd/Ctrl+T` - New terminal tab
+- `Cmd/Ctrl+W` - Close current tab (overrides browser close)
 - `Ctrl+Tab` - Next tab
 - `Ctrl+Shift+Tab` - Previous tab
-- `Ctrl+Shift+V` - Open VS Code tab
+- `Ctrl+Shift+E` - Open VS Code tab
 
 ### Managing the Service
 

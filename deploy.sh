@@ -31,6 +31,7 @@ PYTHON_CMD=""
 SKIP_SSL=false
 SKIP_VSCODE=false
 SERVICE_NAME="rdock"
+BASE_PATH=""
 
 usage() {
     echo "Usage: $0 -d DOMAIN -u USERNAME [OPTIONS]"
@@ -40,6 +41,7 @@ usage() {
     echo "  -u USERNAME   Username for basic authentication"
     echo ""
     echo "Options:"
+    echo "  -b PATH       Base URL path (e.g., /rdock). Default: / (root)"
     echo "  -p PORT       Port for terminal server (default: 8890)"
     echo "  -P PYTHON     Python executable path (auto-detected if not specified)"
     echo "  -s            Skip SSL setup (use self-signed or existing cert)"
@@ -48,13 +50,15 @@ usage() {
     echo ""
     echo "Example:"
     echo "  $0 -d myserver.example.com -u admin"
+    echo "  $0 -d myserver.example.com -u admin -b /rdock"
     exit 1
 }
 
-while getopts "d:u:p:P:sch" opt; do
+while getopts "d:u:b:p:P:sch" opt; do
     case $opt in
         d) DOMAIN="$OPTARG" ;;
         u) USERNAME="$OPTARG" ;;
+        b) BASE_PATH="$OPTARG" ;;
         p) TERMINAL_PORT="$OPTARG" ;;
         P) PYTHON_CMD="$OPTARG" ;;
         s) SKIP_SSL=true ;;
@@ -79,10 +83,11 @@ fi
 echo "========================================"
 echo "  rdock Deployment"
 echo "========================================"
-echo "Domain:   $DOMAIN"
-echo "Username: $USERNAME"
-echo "Terminal: port $TERMINAL_PORT"
-echo "VS Code:  port $VSCODE_PORT"
+echo "Domain:    $DOMAIN"
+echo "Base Path: ${BASE_PATH:-/}"
+echo "Username:  $USERNAME"
+echo "Terminal:  port $TERMINAL_PORT"
+echo "VS Code:   port $VSCODE_PORT"
 echo "========================================"
 echo ""
 
@@ -180,21 +185,33 @@ echo "Step 4: Configuring nginx..."
 NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
 CURRENT_USER=$(whoami)
 
+# Normalize base path (ensure it starts with / and doesn't end with /)
+if [ -n "$BASE_PATH" ]; then
+    # Ensure starts with /
+    [[ "$BASE_PATH" != /* ]] && BASE_PATH="/$BASE_PATH"
+    # Remove trailing slash
+    BASE_PATH="${BASE_PATH%/}"
+fi
+
+# Determine location paths
+TERMINAL_LOCATION="${BASE_PATH:-}/"
+VSCODE_LOCATION_PATH="${BASE_PATH:-}/code/"
+
 # Build VS Code location block if enabled
 VSCODE_LOCATION=""
 if [ "$SKIP_VSCODE" = false ]; then
     VSCODE_LOCATION="
-    # Official VS Code Web at /code
-    location /code/ {
+    # Official VS Code Web
+    location ${VSCODE_LOCATION_PATH} {
         proxy_pass http://127.0.0.1:$VSCODE_PORT/code/;
         proxy_http_version 1.1;
-        proxy_set_header Host \\\$host;
-        proxy_set_header X-Real-IP \\\$remote_addr;
-        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\\$scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         
         # WebSocket support
-        proxy_set_header Upgrade \\\$http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \"upgrade\";
         proxy_set_header Accept-Encoding gzip;
         
@@ -213,8 +230,8 @@ server {
     auth_basic "Terminal Access";
     auth_basic_user_file /etc/nginx/.htpasswd;
 $VSCODE_LOCATION
-    # Terminal at root
-    location / {
+    # Terminal
+    location $TERMINAL_LOCATION {
         proxy_pass http://127.0.0.1:$TERMINAL_PORT/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -372,14 +389,14 @@ echo "========================================"
 echo ""
 echo "Access your services at:"
 if [ "$SKIP_SSL" = true ]; then
-    echo "  rdock:     http://$DOMAIN"
+    echo "  rdock:     http://$DOMAIN${TERMINAL_LOCATION}"
     if [ "$SKIP_VSCODE" = false ]; then
-        echo "  VS Code:   http://$DOMAIN/code/"
+        echo "  VS Code:   http://$DOMAIN${VSCODE_LOCATION_PATH}"
     fi
 else
-    echo "  rdock:     https://$DOMAIN"
+    echo "  rdock:     https://$DOMAIN${TERMINAL_LOCATION}"
     if [ "$SKIP_VSCODE" = false ]; then
-        echo "  VS Code:   https://$DOMAIN/code/"
+        echo "  VS Code:   https://$DOMAIN${VSCODE_LOCATION_PATH}"
     fi
 fi
 echo ""

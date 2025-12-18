@@ -37,6 +37,7 @@ USERNAME=""
 SKIP_SSL=false
 SKIP_VSCODE=false
 TERMINAL_PORT=8890
+BASE_PATH=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -46,6 +47,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -u|--username)
             USERNAME="$2"
+            shift 2
+            ;;
+        -b|--base-path)
+            BASE_PATH="$2"
             shift 2
             ;;
         -s|--skip-ssl)
@@ -81,6 +86,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -u, --username USERNAME   Username for authentication"
             echo ""
             echo "Options:"
+            echo "  -b, --base-path PATH     URL path prefix (e.g., /rdock). Default: / (root)"
             echo "  -p, --port PORT          Port for terminal server (default: 8890)"
             echo "  -s, --skip-ssl           Skip SSL/HTTPS setup"
             echo "  -c, --skip-vscode        Skip VS Code installation"
@@ -202,6 +208,10 @@ print_info "Running deployment script..."
 echo ""
 
 DEPLOY_ARGS="-d $DOMAIN -u $USERNAME -p $TERMINAL_PORT -P $INSTALL_DIR/.conda/bin/python"
+
+if [ -n "$BASE_PATH" ]; then
+    DEPLOY_ARGS="$DEPLOY_ARGS -b $BASE_PATH"
+fi
 
 if [ "$SKIP_SSL" = true ]; then
     DEPLOY_ARGS="$DEPLOY_ARGS -s"

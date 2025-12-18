@@ -141,6 +141,28 @@ class WebTerminal:
             flags = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
             fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
     
+    def spawn_command(self, command, args=[]):
+        """Spawn a specific command in a PTY (for things like gpustat)."""
+        self.pid, self.master_fd = pty.fork()
+        
+        if self.pid == 0:
+            # Child process
+            env = os.environ.copy()
+            env['TERM'] = 'xterm-256color'
+            
+            # Execute the command
+            cmd_path = shutil.which(command)
+            if cmd_path:
+                os.execvpe(cmd_path, [command] + args, env)
+            else:
+                # Command not found
+                print(f"Error: {command} not found. Install it first.")
+                os._exit(1)
+        else:
+            # Parent - set non-blocking
+            flags = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    
     def resize(self, rows, cols):
         """Resize the PTY."""
         if self.master_fd:
@@ -184,11 +206,18 @@ async def terminal_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     
-    # Get session name from query params for tmux persistence
-    session_name = request.query.get('session', None)
+    # Check if this is a gpustat request
+    is_gpustat = request.query.get('gpustat', '') == '1'
     
-    terminal = WebTerminal()
-    terminal.spawn(session_name=session_name)
+    if is_gpustat:
+        # Spawn gpustat command
+        terminal = WebTerminal()
+        terminal.spawn_command('gpustat', ['-f', '-c', '--watch'])
+    else:
+        # Get session name from query params for tmux persistence
+        session_name = request.query.get('session', None)
+        terminal = WebTerminal()
+        terminal.spawn(session_name=session_name)
     
     # Read loop - send PTY output to WebSocket
     async def read_loop():
@@ -207,9 +236,10 @@ async def terminal_handler(request):
                 
                 if data.get('type') == 'resize':
                     terminal.resize(data.get('rows', 24), data.get('cols', 80))
-                elif data.get('type') == 'input':
+                elif data.get('type') == 'input' and not is_gpustat:
+                    # Only allow input for non-gpustat terminals
                     terminal.write(data.get('data', ''))
-                else:
+                elif not is_gpustat:
                     terminal.write(msg.data)
     finally:
         read_task.cancel()
@@ -387,6 +417,7 @@ async def index_handler(request):
         .new-tab-btn:hover { background: #383838; color: #fff; }
         #new-terminal-btn { color: #4ec9b0; }
         #new-vscode-btn { color: #007acc; }
+        #gpustat-btn { color: #f59e0b; margin-left: auto; }
         
         .btn-separator {
             width: 1px;
@@ -618,6 +649,7 @@ async def index_handler(request):
         <button id="new-terminal-btn" class="new-tab-btn" title="New Terminal (Ctrl+Shift+T)">▶</button>
         <div class="btn-separator"></div>
         <button id="new-vscode-btn" class="new-tab-btn" title="New VS Code (Ctrl+Shift+E)">◇</button>
+        <button id="gpustat-btn" class="new-tab-btn" title="GPU Stats (Ctrl+Shift+G)">🖥️</button>
     </div>
     <div id="content-container"></div>
     
@@ -888,6 +920,65 @@ async def index_handler(request):
             return tabId;
         }
         
+        function createGPUStatTab() {
+            const tabId = `gpustat-${++tabCounter}`;
+            
+            // Create tab element
+            const tab = document.createElement('div');
+            tab.className = 'tab terminal-tab';
+            tab.innerHTML = `<span class="tab-icon">🖥️</span><span class="tab-title">GPU Stats</span><span class="tab-close">×</span>`;
+            tab.dataset.tabId = tabId;
+            
+            // Insert before buttons
+            document.querySelector('.new-tab-btn').before(tab);
+            
+            // Create terminal wrapper
+            const wrapper = document.createElement('div');
+            wrapper.className = 'tab-content';
+            wrapper.id = `content-${tabId}`;
+            wrapper.innerHTML = '<div class="terminal-wrapper"></div>';
+            document.getElementById('content-container').appendChild(wrapper);
+            
+            const termContainer = wrapper.querySelector('.terminal-wrapper');
+            
+            // Create terminal
+            const term = new Terminal({
+                cursorBlink: false,
+                fontSize: 14,
+                fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                theme: { background: '#1e1e1e' },
+                disableStdin: true  // Read-only
+            });
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(termContainer);
+            
+            // Connect WebSocket for gpustat streaming
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${location.host}/terminal?gpustat=1`);
+            
+            ws.onopen = () => {
+                fitAddon.fit();
+            };
+            
+            ws.onmessage = (e) => term.write(e.data);
+            ws.onclose = () => {
+                term.write('\\r\\n[GPU Stats stream closed]\\r\\n');
+                tab.style.opacity = '0.5';
+            };
+            
+            // Store tab data
+            tabs.set(tabId, { type: 'gpustat', term, fitAddon, ws, element: tab, wrapper });
+            
+            // Tab click handlers
+            tab.onclick = () => activateTab(tabId);
+            tab.querySelector('.tab-title').onclick = () => activateTab(tabId);
+            tab.querySelector('.tab-close').onclick = (e) => { e.stopPropagation(); closeTab(tabId); };
+            
+            activateTab(tabId);
+            return tabId;
+        }
+        
         function activateTab(tabId) {
             if (activeTabId === tabId) return;
             
@@ -1112,6 +1203,24 @@ async def index_handler(request):
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
+            // Detect Cmd (Mac) or Ctrl (Win/Linux)
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+            const modKey = isMac ? e.metaKey : e.ctrlKey;
+            
+            // Cmd/Ctrl+W: Close current tab (override browser close)
+            if (modKey && !e.shiftKey && e.key.toLowerCase() === 'w') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (activeTabId) closeTab(activeTabId);
+                return false;
+            }
+            // Cmd/Ctrl+Shift+W: Also close current tab
+            if (modKey && e.shiftKey && e.key.toLowerCase() === 'w') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (activeTabId) closeTab(activeTabId);
+                return false;
+            }
             // Ctrl+Shift+T: New terminal
             if (e.ctrlKey && e.shiftKey && e.key === 'T') {
                 e.preventDefault();
@@ -1122,10 +1231,17 @@ async def index_handler(request):
                 e.preventDefault();
                 showFolderModal();
             }
-            // Ctrl+Shift+W: Close tab
-            if (e.ctrlKey && e.shiftKey && e.key === 'W') {
+            // Ctrl+Shift+G: GPU Stats
+            if (e.ctrlKey && e.shiftKey && e.key === 'G') {
                 e.preventDefault();
-                if (activeTabId) closeTab(activeTabId);
+                createGPUStatTab();
+            }
+            // Cmd/Ctrl+T: New terminal (override browser new tab)
+            if (modKey && !e.shiftKey && e.key.toLowerCase() === 't') {
+                e.preventDefault();
+                e.stopPropagation();
+                createTerminalTab();
+                return false;
             }
             // Ctrl+Tab: Next tab
             if (e.ctrlKey && e.key === 'Tab' && !e.shiftKey) {
@@ -1145,11 +1261,12 @@ async def index_handler(request):
                     activateTab(ids[(idx - 1 + ids.length) % ids.length]);
                 }
             }
-        });
+        }, true); // Use capture phase to intercept before browser
         
         // Button handlers
         document.getElementById('new-terminal-btn').onclick = () => createTerminalTab();
         document.getElementById('new-vscode-btn').onclick = showFolderModal;
+        document.getElementById('gpustat-btn').onclick = () => createGPUStatTab();
         
         // Restore state or create first terminal tab
         async function init() {
