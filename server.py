@@ -883,8 +883,8 @@ async def index_handler(request):
                 addRecentWorkspace(folderPath);
             }
             
-            // Build VS Code URL
-            let vscodeUrl = '/code/';
+            // Build VS Code URL (use basePath for sub-path deployments)
+            let vscodeUrl = basePath + '/code/';
             if (folderPath) {
                 vscodeUrl += `?folder=${encodeURIComponent(folderPath)}`;
             }
