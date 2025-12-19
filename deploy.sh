@@ -271,10 +271,23 @@ fi
 if [ "$APPEND_MODE" = true ] && [ -f "$NGINX_CONF" ]; then
     if grep -q "location ${TERMINAL_LOCATION} {" "$NGINX_CONF" || grep -q "# rdock Terminal" "$NGINX_CONF"; then
         print_warning "rdock locations already exist in the nginx config"
-        echo "The config already contains rdock locations at ${TERMINAL_LOCATION}"
-        echo "To reinstall, first remove the existing rdock location blocks manually or use --overwrite"
-        echo ""
-        echo "Skipping nginx location append (already configured)"
+        
+        # Check if port needs updating
+        CURRENT_PORT=$(grep -oP 'proxy_pass http://127\.0\.0\.1:\K[0-9]+' "$NGINX_CONF" | head -1)
+        if [ -n "$CURRENT_PORT" ] && [ "$CURRENT_PORT" != "$TERMINAL_PORT" ]; then
+            print_info "Updating port from $CURRENT_PORT to $TERMINAL_PORT"
+            sudo sed -i "s/127\.0\.0\.1:$CURRENT_PORT/127.0.0.1:$TERMINAL_PORT/g" "$NGINX_CONF"
+            if sudo nginx -t; then
+                sudo systemctl reload nginx
+                print_status "Nginx port updated to $TERMINAL_PORT"
+            else
+                print_error "Nginx config test failed after port update"
+                exit 1
+            fi
+        else
+            print_info "Port already set to $TERMINAL_PORT"
+        fi
+        
         APPEND_MODE=false
         SKIP_NGINX_CONFIG=true
     fi
