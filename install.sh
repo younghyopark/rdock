@@ -248,9 +248,9 @@ echo "========================================"
 echo ""
 echo "Your remote development environment is now running at:"
 if [ "$SKIP_SSL" = true ]; then
-    echo "  ${BLUE}http://$DOMAIN${NC}"
+    echo -e "  ${BLUE}http://$DOMAIN${NC}"
 else
-    echo "  ${BLUE}https://$DOMAIN${NC}"
+    echo -e "  ${BLUE}https://$DOMAIN${NC}"
 fi
 echo ""
 echo "Installed to: $INSTALL_DIR"
