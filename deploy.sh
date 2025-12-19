@@ -267,6 +267,19 @@ if [ -f "$NGINX_CONF" ]; then
     fi
 fi
 
+# Check if rdock locations already exist in the config
+if [ "$APPEND_MODE" = true ] && [ -f "$NGINX_CONF" ]; then
+    if grep -q "location ${TERMINAL_LOCATION} {" "$NGINX_CONF" || grep -q "# rdock Terminal" "$NGINX_CONF"; then
+        print_warning "rdock locations already exist in the nginx config"
+        echo "The config already contains rdock locations at ${TERMINAL_LOCATION}"
+        echo "To reinstall, first remove the existing rdock location blocks manually or use --overwrite"
+        echo ""
+        echo "Skipping nginx location append (already configured)"
+        APPEND_MODE=false
+        SKIP_NGINX_CONFIG=true
+    fi
+fi
+
 # Build location blocks
 TERMINAL_LOCATION_BLOCK="
     # rdock Terminal
@@ -302,7 +315,9 @@ if [ "$SKIP_VSCODE" = false ]; then
     }"
 fi
 
-if [ "$APPEND_MODE" = true ]; then
+if [ "$SKIP_NGINX_CONFIG" = true ]; then
+    print_status "Nginx config unchanged (rdock already configured)"
+elif [ "$APPEND_MODE" = true ]; then
     # Append mode: Insert location blocks into existing server block
     # Create a temporary file with the location blocks
     LOCATIONS_TMP=$(mktemp)
