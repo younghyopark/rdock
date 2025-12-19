@@ -38,6 +38,7 @@ SKIP_SSL=false
 SKIP_VSCODE=false
 TERMINAL_PORT=8890
 BASE_PATH=""
+NGINX_MODE=""  # append, overwrite, or empty for interactive
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -52,6 +53,14 @@ while [[ $# -gt 0 ]]; do
         -b|--base-path)
             BASE_PATH="$2"
             shift 2
+            ;;
+        --append)
+            NGINX_MODE="append"
+            shift
+            ;;
+        --overwrite)
+            NGINX_MODE="overwrite"
+            shift
             ;;
         -s|--skip-ssl)
             SKIP_SSL=true
@@ -87,6 +96,8 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  -b, --base-path PATH     URL path prefix (e.g., /rdock). Default: / (root)"
+            echo "  --append                 Append to existing nginx config (use with -b)"
+            echo "  --overwrite              Overwrite existing nginx config"
             echo "  -p, --port PORT          Port for terminal server (default: 8890)"
             echo "  -s, --skip-ssl           Skip SSL/HTTPS setup"
             echo "  -c, --skip-vscode        Skip VS Code installation"
@@ -211,6 +222,10 @@ DEPLOY_ARGS="-d $DOMAIN -u $USERNAME -p $TERMINAL_PORT -P $INSTALL_DIR/.conda/bi
 
 if [ -n "$BASE_PATH" ]; then
     DEPLOY_ARGS="$DEPLOY_ARGS -b $BASE_PATH"
+fi
+
+if [ -n "$NGINX_MODE" ]; then
+    DEPLOY_ARGS="$DEPLOY_ARGS --$NGINX_MODE"
 fi
 
 if [ "$SKIP_SSL" = true ]; then

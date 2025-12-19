@@ -32,6 +32,7 @@ SKIP_SSL=false
 SKIP_VSCODE=false
 SERVICE_NAME="rdock"
 BASE_PATH=""
+NGINX_MODE=""  # append, overwrite, or empty for interactive
 
 usage() {
     echo "Usage: $0 -d DOMAIN -u USERNAME [OPTIONS]"
@@ -42,6 +43,8 @@ usage() {
     echo ""
     echo "Options:"
     echo "  -b PATH       Base URL path (e.g., /rdock). Default: / (root)"
+    echo "  --append      Append to existing nginx config (non-interactive)"
+    echo "  --overwrite   Overwrite existing nginx config (non-interactive)"
     echo "  -p PORT       Port for terminal server (default: 8890)"
     echo "  -P PYTHON     Python executable path (auto-detected if not specified)"
     echo "  -s            Skip SSL setup (use self-signed or existing cert)"
@@ -50,21 +53,24 @@ usage() {
     echo ""
     echo "Example:"
     echo "  $0 -d myserver.example.com -u admin"
-    echo "  $0 -d myserver.example.com -u admin -b /rdock"
+    echo "  $0 -d myserver.example.com -u admin -b /rdock --append"
     exit 1
 }
 
-while getopts "d:u:b:p:P:sch" opt; do
-    case $opt in
-        d) DOMAIN="$OPTARG" ;;
-        u) USERNAME="$OPTARG" ;;
-        b) BASE_PATH="$OPTARG" ;;
-        p) TERMINAL_PORT="$OPTARG" ;;
-        P) PYTHON_CMD="$OPTARG" ;;
-        s) SKIP_SSL=true ;;
-        c) SKIP_VSCODE=true ;;
-        h) usage ;;
-        *) usage ;;
+# Parse arguments (supports both short opts and --long flags)
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -d) DOMAIN="$2"; shift 2 ;;
+        -u) USERNAME="$2"; shift 2 ;;
+        -b) BASE_PATH="$2"; shift 2 ;;
+        -p) TERMINAL_PORT="$2"; shift 2 ;;
+        -P) PYTHON_CMD="$2"; shift 2 ;;
+        -s) SKIP_SSL=true; shift ;;
+        -c) SKIP_VSCODE=true; shift ;;
+        --append) NGINX_MODE="append"; shift ;;
+        --overwrite) NGINX_MODE="overwrite"; shift ;;
+        -h) usage ;;
+        *) echo "Unknown option: $1"; usage ;;
     esac
 done
 
@@ -208,41 +214,54 @@ if [ -f "$NGINX_CONF" ]; then
     
     if [ -z "$BASE_PATH" ]; then
         # No base path - would conflict with root location
-        print_error "Cannot install at root (/) when config already exists."
-        echo "Options:"
-        echo "  1. Use a base path: -b /rdock"
-        echo "  2. Use a different domain/subdomain"
-        echo "  3. Manually edit the nginx config"
-        echo ""
-        read -p "Continue anyway and OVERWRITE existing config? (y/N): " OVERWRITE
-        if [[ ! "$OVERWRITE" =~ ^[Yy]$ ]]; then
-            echo "Aborted. Use -b /rdock to install at a sub-path."
-            exit 1
+        if [ "$NGINX_MODE" = "overwrite" ]; then
+            print_warning "Overwriting existing config (--overwrite flag)"
+        else
+            print_error "Cannot install at root (/) when config already exists."
+            echo "Options:"
+            echo "  1. Use a base path: -b /rdock"
+            echo "  2. Use a different domain/subdomain"
+            echo "  3. Manually edit the nginx config"
+            echo ""
+            read -p "Continue anyway and OVERWRITE existing config? (y/N): " OVERWRITE
+            if [[ ! "$OVERWRITE" =~ ^[Yy]$ ]]; then
+                echo "Aborted. Use -b /rdock to install at a sub-path."
+                exit 1
+            fi
         fi
     else
         # Base path specified - can safely append
         echo "rdock will be installed at: ${BASE_PATH}/"
         echo "VS Code will be at: ${BASE_PATH}/code/"
         echo ""
-        echo "Options:"
-        echo "  1) Append - Add rdock locations to existing config (recommended)"
-        echo "  2) Overwrite - Replace entire config with rdock only"
-        echo "  3) Cancel"
-        echo ""
-        read -p "Choose [1/2/3]: " CHOICE
-        case $CHOICE in
-            1)
-                APPEND_MODE=true
-                print_info "Will append rdock locations to existing config"
-                ;;
-            2)
-                print_warning "Will overwrite existing config"
-                ;;
-            *)
-                echo "Aborted."
-                exit 1
-                ;;
-        esac
+        
+        if [ "$NGINX_MODE" = "append" ]; then
+            APPEND_MODE=true
+            print_info "Appending rdock locations to existing config (--append flag)"
+        elif [ "$NGINX_MODE" = "overwrite" ]; then
+            print_warning "Overwriting existing config (--overwrite flag)"
+        else
+            # Interactive mode
+            echo "Options:"
+            echo "  1) Append - Add rdock locations to existing config (recommended)"
+            echo "  2) Overwrite - Replace entire config with rdock only"
+            echo "  3) Cancel"
+            echo ""
+            read -p "Choose [1/2/3]: " CHOICE
+            case $CHOICE in
+                1)
+                    APPEND_MODE=true
+                    print_info "Will append rdock locations to existing config"
+                    ;;
+                2)
+                    print_warning "Will overwrite existing config"
+                    ;;
+                *)
+                    echo "Aborted."
+                    exit 1
+                    ;;
+            esac
+        fi
     fi
 fi
 
