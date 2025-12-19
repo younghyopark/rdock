@@ -674,6 +674,9 @@ async def index_handler(request):
     </div>
     
     <script>
+        // Base path for API calls (handles sub-path deployments like /rdock)
+        const basePath = window.location.pathname.replace(/\\/$/, '') || '';
+        
         const tabs = new Map(); // tabId -> { type, element, wrapper, ... }
         let activeTabId = null;
         let tabCounter = 0;
@@ -685,7 +688,7 @@ async def index_handler(request):
         // Server-side state management
         async function loadServerState() {
             try {
-                const resp = await fetch('/state');
+                const resp = await fetch(basePath + '/state');
                 if (resp.ok) {
                     return await resp.json();
                 }
@@ -713,7 +716,7 @@ async def index_handler(request):
             });
             
             try {
-                await fetch('/state', {
+                await fetch(basePath + '/state', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(state)
@@ -840,7 +843,7 @@ async def index_handler(request):
             
             // Connect WebSocket with session name for tmux
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const ws = new WebSocket(`${protocol}//${location.host}/terminal?session=${encodeURIComponent(session)}`);
+            const ws = new WebSocket(`${protocol}//${location.host}${basePath}/terminal?session=${encodeURIComponent(session)}`);
             
             ws.onopen = () => {
                 fitAddon.fit();
@@ -959,7 +962,7 @@ async def index_handler(request):
             
             // Connect WebSocket for gpustat streaming
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const ws = new WebSocket(`${protocol}//${location.host}/terminal?gpustat=1`);
+            const ws = new WebSocket(`${protocol}//${location.host}${basePath}/terminal?gpustat=1`);
             
             ws.onopen = () => {
                 fitAddon.fit();
@@ -1028,7 +1031,7 @@ async def index_handler(request):
                 
                 // Kill the tmux session when explicitly closing tab
                 if (killSession && tab.sessionName) {
-                    fetch(`/kill-session?session=${encodeURIComponent(tab.sessionName)}`);
+                    fetch(`${basePath}/kill-session?session=${encodeURIComponent(tab.sessionName)}`);
                 }
             }
             
@@ -1100,7 +1103,7 @@ async def index_handler(request):
         
         async function fetchSuggestions(path) {
             try {
-                const resp = await fetch(`/list-dirs?path=${encodeURIComponent(path)}`);
+                const resp = await fetch(`${basePath}/list-dirs?path=${encodeURIComponent(path)}`);
                 const data = await resp.json();
                 showSuggestions(data.dirs, data.base);
             } catch (e) {
