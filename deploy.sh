@@ -454,6 +454,7 @@ ExecStart=$PYTHON_CMD $SERVER_PY
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=RDOCK_PORT=$TERMINAL_PORT
 
 [Install]
 WantedBy=multi-user.target

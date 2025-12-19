@@ -1557,4 +1557,5 @@ app.router.add_get('/state', get_state_handler)
 app.router.add_post('/state', save_state_handler)
 
 if __name__ == '__main__':
-    web.run_app(app, host='0.0.0.0', port=8890)
+    port = int(os.environ.get('RDOCK_PORT', 8890))
+    web.run_app(app, host='0.0.0.0', port=port)
