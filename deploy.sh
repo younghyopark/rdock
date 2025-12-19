@@ -184,6 +184,7 @@ echo "Step 4: Configuring nginx..."
 
 NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
 CURRENT_USER=$(whoami)
+APPEND_MODE=false
 
 # Normalize base path (ensure it starts with / and doesn't end with /)
 if [ -n "$BASE_PATH" ]; then
@@ -197,40 +198,57 @@ fi
 TERMINAL_LOCATION="${BASE_PATH:-}/"
 VSCODE_LOCATION_PATH="${BASE_PATH:-}/code/"
 
-# Build VS Code location block if enabled
-VSCODE_LOCATION=""
-if [ "$SKIP_VSCODE" = false ]; then
-    VSCODE_LOCATION="
-    # Official VS Code Web
-    location ${VSCODE_LOCATION_PATH} {
-        proxy_pass http://127.0.0.1:$VSCODE_PORT/code/;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # WebSocket support
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \"upgrade\";
-        proxy_set_header Accept-Encoding gzip;
-        
-        proxy_read_timeout 86400;
-        proxy_connect_timeout 60;
-    }
-"
+# Check if nginx config already exists
+if [ -f "$NGINX_CONF" ]; then
+    echo ""
+    print_warning "Nginx configuration already exists for $DOMAIN"
+    echo ""
+    echo "Existing config: $NGINX_CONF"
+    echo ""
+    
+    if [ -z "$BASE_PATH" ]; then
+        # No base path - would conflict with root location
+        print_error "Cannot install at root (/) when config already exists."
+        echo "Options:"
+        echo "  1. Use a base path: -b /rdock"
+        echo "  2. Use a different domain/subdomain"
+        echo "  3. Manually edit the nginx config"
+        echo ""
+        read -p "Continue anyway and OVERWRITE existing config? (y/N): " OVERWRITE
+        if [[ ! "$OVERWRITE" =~ ^[Yy]$ ]]; then
+            echo "Aborted. Use -b /rdock to install at a sub-path."
+            exit 1
+        fi
+    else
+        # Base path specified - can safely append
+        echo "rdock will be installed at: ${BASE_PATH}/"
+        echo "VS Code will be at: ${BASE_PATH}/code/"
+        echo ""
+        echo "Options:"
+        echo "  1) Append - Add rdock locations to existing config (recommended)"
+        echo "  2) Overwrite - Replace entire config with rdock only"
+        echo "  3) Cancel"
+        echo ""
+        read -p "Choose [1/2/3]: " CHOICE
+        case $CHOICE in
+            1)
+                APPEND_MODE=true
+                print_info "Will append rdock locations to existing config"
+                ;;
+            2)
+                print_warning "Will overwrite existing config"
+                ;;
+            *)
+                echo "Aborted."
+                exit 1
+                ;;
+        esac
+    fi
 fi
 
-# Create initial HTTP-only config (certbot will add SSL)
-sudo tee "$NGINX_CONF" > /dev/null << EOF
-server {
-    server_name $DOMAIN;
-
-    # Basic Authentication
-    auth_basic "Terminal Access";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-$VSCODE_LOCATION
-    # Terminal
+# Build location blocks
+TERMINAL_LOCATION_BLOCK="
+    # rdock Terminal
     location $TERMINAL_LOCATION {
         proxy_pass http://127.0.0.1:$TERMINAL_PORT/;
         proxy_http_version 1.1;
@@ -238,25 +256,101 @@ $VSCODE_LOCATION
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        
-        # CRITICAL for WebSocket support
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        
-        # Long timeout for WebSocket connections
+        proxy_set_header Connection \"upgrade\";
         proxy_read_timeout 86400;
         proxy_connect_timeout 60;
-    }
+    }"
+
+VSCODE_LOCATION_BLOCK=""
+if [ "$SKIP_VSCODE" = false ]; then
+    VSCODE_LOCATION_BLOCK="
+    # rdock VS Code
+    location ${VSCODE_LOCATION_PATH} {
+        proxy_pass http://127.0.0.1:$VSCODE_PORT/code/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \"upgrade\";
+        proxy_set_header Accept-Encoding gzip;
+        proxy_read_timeout 86400;
+        proxy_connect_timeout 60;
+    }"
+fi
+
+if [ "$APPEND_MODE" = true ]; then
+    # Append mode: Insert location blocks into existing server block
+    # Create a temporary file with the location blocks
+    LOCATIONS_TMP=$(mktemp)
+    echo "$VSCODE_LOCATION_BLOCK" > "$LOCATIONS_TMP"
+    echo "$TERMINAL_LOCATION_BLOCK" >> "$LOCATIONS_TMP"
+    
+    # Find the line with "listen 443" or "listen 80" in the HTTPS server block and insert before it
+    # We'll insert after the auth_basic lines if they exist, otherwise after server_name
+    if grep -q "listen 443" "$NGINX_CONF"; then
+        # Has SSL - insert before "listen 443"
+        sudo sed -i "/listen 443/r $LOCATIONS_TMP" "$NGINX_CONF"
+        # Actually we need to insert BEFORE, not after. Let's use a different approach.
+        # Create backup and rebuild
+        sudo cp "$NGINX_CONF" "${NGINX_CONF}.bak"
+        
+        # Use awk to insert before "listen 443"
+        sudo awk -v locations="$(cat $LOCATIONS_TMP)" '
+            /listen 443/ && !inserted {
+                print locations
+                inserted=1
+            }
+            {print}
+        ' "${NGINX_CONF}.bak" | sudo tee "$NGINX_CONF" > /dev/null
+    else
+        # No SSL yet - insert before "listen 80"
+        sudo cp "$NGINX_CONF" "${NGINX_CONF}.bak"
+        sudo awk -v locations="$(cat $LOCATIONS_TMP)" '
+            /listen 80/ && !inserted {
+                print locations
+                inserted=1
+            }
+            {print}
+        ' "${NGINX_CONF}.bak" | sudo tee "$NGINX_CONF" > /dev/null
+    fi
+    
+    rm -f "$LOCATIONS_TMP"
+    
+    # Test and reload
+    if sudo nginx -t; then
+        sudo systemctl reload nginx
+        print_status "rdock locations appended to existing nginx config"
+    else
+        print_error "Nginx config test failed! Restoring backup..."
+        sudo cp "${NGINX_CONF}.bak" "$NGINX_CONF"
+        sudo nginx -t && sudo systemctl reload nginx
+        exit 1
+    fi
+else
+    # Overwrite mode: Create new config
+    sudo tee "$NGINX_CONF" > /dev/null << EOF
+server {
+    server_name $DOMAIN;
+
+    # Basic Authentication
+    auth_basic "Terminal Access";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+$VSCODE_LOCATION_BLOCK
+$TERMINAL_LOCATION_BLOCK
 
     listen 80;
 }
 EOF
 
-# Enable site
-sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-print_status "nginx configured"
+    # Enable site
+    sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
+    sudo nginx -t
+    sudo systemctl reload nginx
+    print_status "nginx configured"
+fi
 
 #######################################
 # Step 5: Set up SSL with Let's Encrypt
@@ -266,6 +360,13 @@ echo "Step 5: Setting up SSL..."
 
 if [ "$SKIP_SSL" = true ]; then
     print_warning "Skipping SSL setup (--skip-ssl flag)"
+elif [ "$APPEND_MODE" = true ]; then
+    # In append mode, SSL should already be configured
+    if grep -q "listen 443 ssl" "$NGINX_CONF"; then
+        print_status "SSL already configured (append mode)"
+    else
+        print_warning "Existing config doesn't have SSL. Run certbot manually if needed."
+    fi
 else
     sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email
     print_status "SSL certificate obtained and configured"
@@ -277,17 +378,25 @@ fi
 echo ""
 echo "Step 6: Setting up basic authentication..."
 
-if [ ! -f /etc/nginx/.htpasswd ]; then
+if [ "$APPEND_MODE" = true ]; then
+    # In append mode, check if auth is already configured
+    if grep -q "auth_basic" "$NGINX_CONF"; then
+        print_status "Basic auth already configured in existing config"
+    else
+        print_warning "Existing config doesn't have auth. rdock locations will be unprotected!"
+        echo "Consider adding auth_basic to your nginx config."
+    fi
+elif [ ! -f /etc/nginx/.htpasswd ]; then
     echo "Creating password for user: $USERNAME"
     sudo htpasswd -c /etc/nginx/.htpasswd "$USERNAME"
+    print_status "Basic auth configured"
+    sudo systemctl reload nginx
 else
     echo "Adding/updating password for user: $USERNAME"
     sudo htpasswd /etc/nginx/.htpasswd "$USERNAME"
+    print_status "Basic auth configured"
+    sudo systemctl reload nginx
 fi
-print_status "Basic auth configured"
-
-# Reload nginx to apply auth
-sudo systemctl reload nginx
 
 #######################################
 # Step 7: Create systemd services
