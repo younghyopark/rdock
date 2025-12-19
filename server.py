@@ -18,6 +18,10 @@ STATE_FILE = os.path.expanduser('~/.rdock_state.json')
 HTPASSWD_FILE = '/etc/nginx/.htpasswd'
 SESSIONS = {}  # In-memory session store
 
+# Base path for when rdock is served under a sub-path (e.g., /rdock)
+# This affects redirects and asset paths
+BASE_PATH = os.environ.get('RDOCK_BASE_PATH', '').rstrip('/')
+
 def get_server_info():
     """Get server hostname and other info for display."""
     hostname = socket.gethostname()
@@ -1309,6 +1313,7 @@ async def index_handler(request):
 async def login_page_handler(request):
     """Serve the login page."""
     server_info = get_server_info()
+    base_path = BASE_PATH  # For use in template
     error_msg = request.query.get('error', '')
     
     error_html = ''
@@ -1466,7 +1471,7 @@ async def login_page_handler(request):
             
             {error_html}
             
-            <form method="POST" action="/login">
+            <form method="POST" action="{base_path}/login">
                 <div class="form-group">
                     <label class="form-label">Username</label>
                     <input type="text" name="username" class="form-input" placeholder="username" required autofocus>
@@ -1491,10 +1496,13 @@ async def login_page_handler(request):
 
 async def login_handler(request):
     """Handle login form submission."""
+    home_url = f'{BASE_PATH}/' if BASE_PATH else '/'
+    login_url = f'{BASE_PATH}/login' if BASE_PATH else '/login'
+    
     # If no htpasswd file exists, allow access without auth
     if not htpasswd_exists():
         session_id = create_session('anonymous')
-        response = web.HTTPFound('/')
+        response = web.HTTPFound(home_url)
         response.set_cookie('session_id', session_id, max_age=86400*30, httponly=True)
         return response
     
@@ -1504,19 +1512,20 @@ async def login_handler(request):
     
     if verify_htpasswd(username, password):
         session_id = create_session(username)
-        response = web.HTTPFound('/')
+        response = web.HTTPFound(home_url)
         response.set_cookie('session_id', session_id, max_age=86400*30, httponly=True)  # 30 days
         return response
     else:
-        return web.HTTPFound('/login?error=Invalid%20username%20or%20password')
+        return web.HTTPFound(f'{login_url}?error=Invalid%20username%20or%20password')
 
 
 async def logout_handler(request):
     """Handle logout."""
+    login_url = f'{BASE_PATH}/login' if BASE_PATH else '/login'
     session_id = request.cookies.get('session_id')
     if session_id and session_id in SESSIONS:
         del SESSIONS[session_id]
-    response = web.HTTPFound('/login')
+    response = web.HTTPFound(login_url)
     response.del_cookie('session_id')
     return response
 
@@ -1537,7 +1546,9 @@ async def auth_middleware(app, handler):
             # For API/WebSocket, return 401
             if request.path in ['/terminal', '/state', '/list-dirs', '/kill-session']:
                 return web.json_response({'error': 'Unauthorized'}, status=401)
-            return web.HTTPFound('/login')
+            # Redirect to login with base path
+            login_url = f'{BASE_PATH}/login' if BASE_PATH else '/login'
+            return web.HTTPFound(login_url)
         
         return await handler(request)
     

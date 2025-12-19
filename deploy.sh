@@ -294,7 +294,17 @@ if [ "$APPEND_MODE" = true ] && [ -f "$NGINX_CONF" ]; then
 fi
 
 # Build location blocks
-TERMINAL_LOCATION_BLOCK="
+# Add redirect from /basepath to /basepath/ if base path is set
+REDIRECT_BLOCK=""
+if [ -n "$BASE_PATH" ]; then
+    REDIRECT_BLOCK="
+    # Redirect /rdock to /rdock/
+    location = $BASE_PATH {
+        return 301 \$scheme://\$host$BASE_PATH/;
+    }"
+fi
+
+TERMINAL_LOCATION_BLOCK="$REDIRECT_BLOCK
     # rdock Terminal
     location $TERMINAL_LOCATION {
         proxy_pass http://127.0.0.1:$TERMINAL_PORT/;
@@ -468,6 +478,7 @@ Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 Environment=RDOCK_PORT=$TERMINAL_PORT
+Environment=RDOCK_BASE_PATH=$BASE_PATH
 
 [Install]
 WantedBy=multi-user.target
