@@ -321,10 +321,14 @@ TERMINAL_LOCATION_BLOCK="$REDIRECT_BLOCK
 
 VSCODE_LOCATION_BLOCK=""
 if [ "$SKIP_VSCODE" = false ]; then
+    # Determine the proxy pass path based on base path
+    VSCODE_PROXY_PATH="${BASE_PATH}/code/"
+    [[ -z "$BASE_PATH" ]] && VSCODE_PROXY_PATH="/code/"
+    
     VSCODE_LOCATION_BLOCK="
     # rdock VS Code
     location ${VSCODE_LOCATION_PATH} {
-        proxy_pass http://127.0.0.1:$VSCODE_PORT/code/;
+        proxy_pass http://127.0.0.1:$VSCODE_PORT${VSCODE_PROXY_PATH};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -494,6 +498,10 @@ if [ "$SKIP_VSCODE" = false ]; then
     echo ""
     echo "Step 7b: Creating VS Code service..."
     
+    # Determine VS Code base path
+    VSCODE_BASE_PATH="${BASE_PATH}/code"
+    [[ -z "$BASE_PATH" ]] && VSCODE_BASE_PATH="/code"
+    
     sudo tee "/etc/systemd/system/vscode-web.service" > /dev/null << EOF
 [Unit]
 Description=VS Code Official Web Server
@@ -503,7 +511,7 @@ After=network.target
 Type=simple
 User=$CURRENT_USER
 Environment=HOME=/home/$CURRENT_USER
-ExecStart=/usr/local/bin/code-cli serve-web --host 127.0.0.1 --port $VSCODE_PORT --without-connection-token --accept-server-license-terms --server-base-path /code
+ExecStart=/usr/local/bin/code-cli serve-web --host 127.0.0.1 --port $VSCODE_PORT --without-connection-token --accept-server-license-terms --server-base-path $VSCODE_BASE_PATH
 Restart=always
 RestartSec=5
 
